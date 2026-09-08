@@ -75,7 +75,9 @@ private func setPropertyValue<T>(
 ) throws {
     var mutableValue = value
     let size = UInt32(MemoryLayout<T>.stride)
-    let status = AudioObjectSetPropertyData(objectID, &address, 0, nil, size, &mutableValue)
+    let status = withUnsafeBytes(of: &mutableValue) { buffer in
+        AudioObjectSetPropertyData(objectID, &address, 0, nil, size, buffer.baseAddress!)
+    }
     guard status == noErr else {
         throw HALError.osStatus(status, "AudioObjectSetPropertyData")
     }

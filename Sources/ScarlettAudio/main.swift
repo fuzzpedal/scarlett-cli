@@ -8,8 +8,8 @@ func printError(_ message: String) {
 }
 
 func allStreamIDs(_ deviceID: AudioObjectID) throws -> [AudioObjectID] {
-    let inputs = (try? streamIDs(deviceID, scope: kAudioObjectPropertyScopeInput)) ?? []
-    let outputs = (try? streamIDs(deviceID, scope: kAudioObjectPropertyScopeOutput)) ?? []
+    let inputs = try streamIDs(deviceID, scope: kAudioObjectPropertyScopeInput)
+    let outputs = try streamIDs(deviceID, scope: kAudioObjectPropertyScopeOutput)
     let streams = inputs + outputs
     guard !streams.isEmpty else {
         throw HALError.noStreams(try deviceName(deviceID))
