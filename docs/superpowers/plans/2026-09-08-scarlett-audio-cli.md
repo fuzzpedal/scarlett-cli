@@ -781,7 +781,7 @@ Device: Scarlett 18i20 USB
 Sample rate: 48000.0 Hz
   available: 44100.0, 48000.0, 88200.0, 96000.0
 Bit depth: 24 bits
-  available: 16, 24
+  available: 24
 ```
 
 Confirm the reported sample rate and bit depth match what Audio MIDI Setup shows for the Scarlett 18i20 (open `/System/Applications/Utilities/Audio MIDI Setup.app`, select the device, read the Format column). If the numbers disagree, stop and investigate before continuing.
@@ -993,22 +993,31 @@ Expected: PASS — 25 tests, no failures, sources compile.
 
 - [ ] **Step 4: Manually verify against the hardware**
 
-Note the current bit depth and the available list: `swift run scarlett-audio status`
+**Hardware reality, measured 2026-09-08:** this 18i20 exposes exactly one bit
+depth — 24 — on both its input and output stream, at all four sample rates
+(44100/48000/88200/96000). There is no second depth to switch to, so the
+verification below exercises the success path idempotently and the rejection
+path with a depth the device genuinely lacks.
 
-Switch to another available depth (use 16 if the device reports 24):
+Note the current bit depth and the available list: `swift run scarlett-audio status`
+Expected: `Bit depth: 24 bits` and `available: 24`.
+
+Success path — re-set the depth the device already has:
+
+Run: `swift run scarlett-audio set-bits 24`
+Expected: `✅ Bit depth is now 24 bits`, exit code 0 (`echo $?` → `0`). This
+confirms the format lookup, the `setPhysicalFormat` call, and the readback all
+work; it is a no-op on the hardware.
+
+Rejection path — a depth the device does not offer:
 
 Run: `swift run scarlett-audio set-bits 16`
-Expected: `✅ Bit depth is now 16 bits`, exit code 0.
-
-Confirm in Audio MIDI Setup that the Format column for the Scarlett 18i20 now shows 16-bit, then confirm the tool agrees: `swift run scarlett-audio status`.
-
-Check the failure path with an unsupported depth:
+Expected: `Error: No 16-bit format available at 48000.0 Hz`, exit code 1.
 
 Run: `swift run scarlett-audio set-bits 8`
-Expected: `Error: No 8-bit format available at <current rate> Hz`, exit code 1.
+Expected: `Error: No 8-bit format available at 48000.0 Hz`, exit code 1.
 
-Restore the original depth: `swift run scarlett-audio set-bits 24`
-Expected: `✅ Bit depth is now 24 bits`
+Nothing needs restoring — the device never left 24-bit.
 
 - [ ] **Step 5: Commit**
 
@@ -1110,7 +1119,7 @@ Device: Scarlett 18i20 USB
 Sample rate: 48000.0 Hz
   available: 44100.0, 48000.0, 88200.0, 96000.0
 Bit depth: 24 bits
-  available: 16, 24
+  available: 24
 ```
 
 Every `set` command re-reads the property afterwards and reports whether the
@@ -1167,6 +1176,7 @@ EOF
 - Create: `Tests/ScarlettAudioTests/ClockSourceLogicTests.swift`
 - Modify: `Sources/ScarlettAudio/CLI.swift` (add `.setClock`, parse `set-clock`, update usage text)
 - Modify: `Tests/ScarlettAudioTests/CLITests.swift` (add `set-clock` parsing tests)
+- Modify: `Sources/ScarlettAudio/main.swift` (placeholder `.setClock` switch arm — adding the enum case makes the existing switch non-exhaustive; see Step 6)
 
 **Interfaces:**
 - Consumes: `Command`, `CLIError`, `parseArguments` (Task 1).
