@@ -38,6 +38,22 @@ func runStatus() throws {
     print("  available: \(bitDepths.map { String($0) }.joined(separator: ", "))")
 }
 
+func runSetRate(_ requestedRate: Double) throws {
+    let deviceID = try findDevice(nameContains: deviceNameQuery)
+    try setNominalSampleRate(deviceID, to: requestedRate)
+
+    let actual = try pollUntilMatches(
+        read: { try nominalSampleRate(deviceID) },
+        matches: { valuesMatch(requested: requestedRate, actual: $0) }
+    )
+
+    guard valuesMatch(requested: requestedRate, actual: actual) else {
+        print("❌ Sample rate is \(actual) Hz, expected \(requestedRate) Hz")
+        exit(1)
+    }
+    print("✅ Sample rate is now \(actual) Hz")
+}
+
 let arguments = Array(CommandLine.arguments.dropFirst())
 
 let command: Command
@@ -54,7 +70,9 @@ do {
     switch command {
     case .status:
         try runStatus()
-    case .setRate, .setBits, .set:
+    case .setRate(let rate):
+        try runSetRate(rate)
+    case .setBits, .set:
         printError("Command not implemented yet")
         exit(1)
     }
