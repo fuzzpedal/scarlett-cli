@@ -116,10 +116,20 @@ exit code.
 
 ## Build & install
 
-SwiftPM package: `Package.swift` + `Sources/scarlett-audio/main.swift`
-(plus a small `CoreAudioHAL.swift` helper module for the property
-get/set wrappers, to keep `main.swift` focused on argument parsing and
-output).
+SwiftPM package with the executable **product** named `scarlett-audio`
+and the target/**module** named `ScarlettAudio` (Swift module names
+cannot contain hyphens):
+
+- `Sources/ScarlettAudio/CLI.swift` — argument parsing (pure)
+- `Sources/ScarlettAudio/AudioFormatLogic.swift` — rate/bit-depth list
+  math and tolerance comparison (pure)
+- `Sources/ScarlettAudio/CoreAudioHAL.swift` — Core Audio property
+  get/set wrappers (I/O)
+- `Sources/ScarlettAudio/Verification.swift` — readback polling (I/O)
+- `Sources/ScarlettAudio/main.swift` — dispatch and output formatting
+
+The pure/I/O split is what makes the logic unit-testable without the
+hardware attached.
 
 Build: `swift build -c release` → binary at
 `.build/release/scarlett-audio`. No install step required; the user
@@ -127,9 +137,13 @@ can copy it onto their `PATH` if desired.
 
 ## Testing
 
-Hardware/OS-API bound — no meaningful unit tests without the physical
-interface attached. Verification is manual: run each subcommand with
-the 18i20 connected, and cross-check results against Audio MIDI Setup.
+The pure logic (argument parsing, rate/bit-depth list math, tolerance
+comparison) is unit-tested with XCTest and runs without hardware.
+
+The Core Audio wrappers are hardware/OS-API bound — no meaningful unit
+tests without the physical interface attached. Those are verified
+manually: run each subcommand with the 18i20 connected, and cross-check
+results against Audio MIDI Setup.
 
 ## Out of scope
 
