@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a macOS command-line tool that reads and sets the sample rate and bit depth of a Focusrite Scarlett 18i20, verifying after every change that the hardware actually applied it.
+**Goal:** Build a macOS command-line tool that reads and sets the sample rate, bit depth, and clock source of a Focusrite Scarlett 18i20, verifying after every change that the hardware actually applied it.
 
 **Architecture:** A Swift Package Manager executable. Pure, unit-tested logic (argument parsing, rate/bit-depth list math, tolerance comparison) is separated from thin Core Audio HAL wrappers that do the actual `AudioObjectGetPropertyData`/`AudioObjectSetPropertyData` I/O. `main.swift` only parses, dispatches, and formats output.
 
@@ -19,7 +19,9 @@
 - Device is matched by case-insensitive substring `"Scarlett 18i20"`.
 - Release binary path after `swift build -c release`: `.build/release/scarlett-audio`.
 - Every `set-*` operation must re-read the property and exit non-zero if the readback does not match the request.
-- Hardware state: the interface is connected and currently runs at 48000 Hz. Manual verification steps assume it is plugged in; if it is not, note that and still require the build and unit tests to pass.
+- Clock source IDs are hardware-assigned, not stable constants. Always resolve a source by name against the live device list; never hard-code an ID in shipped code (the IDs in test fixtures are fine — they are just data).
+- Hardware state: the interface is connected, currently runs at 48000 Hz, is clocked Internal, and is the machine's **default output device** — so a manual step that switches it to an external clock can interrupt system audio until Internal is restored.
+- Tasks 1–6 build sample rate and bit depth; Tasks 7–8 add clock source. The tool is complete and usable after Task 6.
 
 ---
 
@@ -1150,6 +1152,436 @@ Expected: current device state printed, matching Audio MIDI Setup.
 git add Sources/ScarlettAudio/main.swift README.md
 git commit -m "$(cat <<'EOF'
 Add combined set command and README
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 7: Clock source matching logic and `set-clock` parsing
+
+**Files:**
+- Create: `Sources/ScarlettAudio/ClockSourceLogic.swift`
+- Create: `Tests/ScarlettAudioTests/ClockSourceLogicTests.swift`
+- Modify: `Sources/ScarlettAudio/CLI.swift` (add `.setClock`, parse `set-clock`, update usage text)
+- Modify: `Tests/ScarlettAudioTests/CLITests.swift` (add `set-clock` parsing tests)
+
+**Interfaces:**
+- Consumes: `Command`, `CLIError`, `parseArguments` (Task 1).
+- Produces:
+  - `struct ClockSource: Equatable { let id: UInt32; let name: String }`
+  - `func normalizedClockName(_ name: String) -> String`
+  - `func findClockSource(named query: String, in sources: [ClockSource]) -> ClockSource?`
+  - `Command` gains `case setClock(String)`
+
+- [ ] **Step 1: Write the failing tests for the clock source logic**
+
+Create `Tests/ScarlettAudioTests/ClockSourceLogicTests.swift`:
+
+```swift
+import XCTest
+@testable import ScarlettAudio
+
+final class ClockSourceLogicTests: XCTestCase {
+    // Real IDs and names read from the Scarlett 18i20 on 2026-09-08.
+    private let sources = [
+        ClockSource(id: 690487296, name: "Internal"),
+        ClockSource(id: 707264512, name: "S/PDIF"),
+        ClockSource(id: 724041728, name: "ADAT")
+    ]
+
+    func test_normalizedClockNameStripsPunctuationAndCase() {
+        XCTAssertEqual(normalizedClockName("S/PDIF"), "spdif")
+        XCTAssertEqual(normalizedClockName("Internal"), "internal")
+        XCTAssertEqual(normalizedClockName("Word Clock"), "wordclock")
+    }
+
+    func test_findClockSourceExactName() {
+        XCTAssertEqual(
+            findClockSource(named: "Internal", in: sources),
+            ClockSource(id: 690487296, name: "Internal")
+        )
+    }
+
+    func test_findClockSourceIgnoresCase() {
+        XCTAssertEqual(
+            findClockSource(named: "adat", in: sources),
+            ClockSource(id: 724041728, name: "ADAT")
+        )
+    }
+
+    func test_findClockSourceIgnoresPunctuation() {
+        XCTAssertEqual(
+            findClockSource(named: "spdif", in: sources),
+            ClockSource(id: 707264512, name: "S/PDIF")
+        )
+        XCTAssertEqual(
+            findClockSource(named: "S/PDIF", in: sources),
+            ClockSource(id: 707264512, name: "S/PDIF")
+        )
+    }
+
+    func test_findClockSourceUnknownName() {
+        XCTAssertNil(findClockSource(named: "wordclock", in: sources))
+    }
+
+    func test_findClockSourceEmptyList() {
+        XCTAssertNil(findClockSource(named: "internal", in: []))
+    }
+}
+```
+
+- [ ] **Step 2: Add the `set-clock` parsing tests**
+
+In `Tests/ScarlettAudioTests/CLITests.swift`, add these three tests directly after `test_setBitsInvalidNumber`:
+
+```swift
+    func test_setClockCommand() {
+        assertSuccess(parseArguments(["set-clock", "spdif"]), equals: .setClock("spdif"))
+    }
+
+    func test_setClockPreservesArgumentVerbatim() {
+        assertSuccess(parseArguments(["set-clock", "S/PDIF"]), equals: .setClock("S/PDIF"))
+    }
+
+    func test_setClockMissingArgument() {
+        assertFailure(parseArguments(["set-clock"]), equals: .missingArgument("<source>"))
+    }
+```
+
+- [ ] **Step 3: Run the tests to verify they fail**
+
+Run: `swift test`
+Expected: FAIL — `cannot find 'ClockSource' in scope`, `cannot find 'normalizedClockName' in scope`, and `type 'Command' has no member 'setClock'`.
+
+- [ ] **Step 4: Write the clock source logic**
+
+Create `Sources/ScarlettAudio/ClockSourceLogic.swift`:
+
+```swift
+import Foundation
+
+struct ClockSource: Equatable {
+    let id: UInt32
+    let name: String
+}
+
+/// Clock source IDs are hardware-assigned rather than stable constants, so
+/// sources are always matched by name against the live device list. Names are
+/// reduced to lowercase alphanumerics so "S/PDIF", "spdif" and "SPDIF" match.
+func normalizedClockName(_ name: String) -> String {
+    name.lowercased().filter { $0.isLetter || $0.isNumber }
+}
+
+func findClockSource(named query: String, in sources: [ClockSource]) -> ClockSource? {
+    let target = normalizedClockName(query)
+    return sources.first { normalizedClockName($0.name) == target }
+}
+```
+
+- [ ] **Step 5: Add `set-clock` to the parser**
+
+In `Sources/ScarlettAudio/CLI.swift`, add the case to `Command`:
+
+```swift
+enum Command: Equatable {
+    case status
+    case setRate(Double)
+    case setBits(UInt32)
+    case setClock(String)
+    case set(rate: Double, bits: UInt32)
+}
+```
+
+Update the unknown-command message to list it:
+
+```swift
+        case .unknownCommand(let name):
+            return "Unknown command \"\(name)\". Expected one of: status, set-rate, set-bits, set-clock, set"
+```
+
+Update `usageText`:
+
+```swift
+let usageText = """
+Usage:
+  scarlett-audio status
+  scarlett-audio set-rate <hz>
+  scarlett-audio set-bits <bits>
+  scarlett-audio set-clock <source>
+  scarlett-audio set --rate <hz> --bits <bits>
+"""
+```
+
+And add this case to the `switch commandName` block, directly after the `"set-bits"` case:
+
+```swift
+    case "set-clock":
+        guard let source = rest.first else {
+            return .failure(.missingArgument("<source>"))
+        }
+        return .success(.setClock(source))
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `swift test`
+Expected: FAIL to compile at first — `main.swift`'s command switch is no longer exhaustive (`Command` gained `.setClock`). Add this arm to the switch in `Sources/ScarlettAudio/main.swift`, directly after the `.setBits` arm, then re-run:
+
+```swift
+    case .setClock:
+        printError("Command not implemented yet")
+        exit(1)
+```
+
+Run: `swift test`
+Expected: PASS — 34 tests (25 existing + 6 clock logic + 3 CLI), no failures.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add Sources/ScarlettAudio/ClockSourceLogic.swift Sources/ScarlettAudio/CLI.swift Sources/ScarlettAudio/main.swift Tests/ScarlettAudioTests/ClockSourceLogicTests.swift Tests/ScarlettAudioTests/CLITests.swift
+git commit -m "$(cat <<'EOF'
+Add clock source matching logic and set-clock parsing
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 8: Clock source HAL wiring, `status` line, and `set-clock` command
+
+**Files:**
+- Modify: `Sources/ScarlettAudio/CoreAudioHAL.swift` (add four clock functions)
+- Modify: `Sources/ScarlettAudio/main.swift` (clock line in `runStatus`, add `runSetClock`, dispatch)
+- Modify: `README.md` (document `set-clock` and the external-clock caveats)
+
+**Interfaces:**
+- Consumes: `address`, `getPropertyArray`, `getPropertyValue`, `setPropertyValue`, `HALError` (Task 3); `pollUntilMatches` (Task 4); `ClockSource`, `findClockSource`, `normalizedClockName` (Task 7).
+- Produces:
+  - `func clockSourceName(_ id: AudioObjectID, sourceID: UInt32) throws -> String`
+  - `func clockSources(_ id: AudioObjectID) throws -> [ClockSource]`
+  - `func currentClockSource(_ id: AudioObjectID) throws -> UInt32`
+  - `func setClockSource(_ id: AudioObjectID, to sourceID: UInt32) throws`
+  - In `main.swift`: `func runSetClock(_ requestedName: String) throws`
+
+- [ ] **Step 1: Add the clock functions to the HAL**
+
+Append to `Sources/ScarlettAudio/CoreAudioHAL.swift`:
+
+```swift
+/// Resolves a clock source ID to its display name. This property takes an
+/// AudioValueTranslation, which carries pointers to the input ID and the
+/// output CFString rather than the values themselves.
+func clockSourceName(_ id: AudioObjectID, sourceID: UInt32) throws -> String {
+    var propertyAddress = address(kAudioDevicePropertyClockSourceNameForIDCFString)
+    var input = sourceID
+    var output: CFString?
+    var resolved: String?
+    var status: OSStatus = noErr
+
+    withUnsafeMutablePointer(to: &input) { inputPointer in
+        withUnsafeMutablePointer(to: &output) { outputPointer in
+            var translation = AudioValueTranslation(
+                mInputData: UnsafeMutableRawPointer(inputPointer),
+                mInputDataSize: UInt32(MemoryLayout<UInt32>.size),
+                mOutputData: UnsafeMutableRawPointer(outputPointer),
+                mOutputDataSize: UInt32(MemoryLayout<CFString?>.size)
+            )
+            var size = UInt32(MemoryLayout<AudioValueTranslation>.size)
+            status = AudioObjectGetPropertyData(id, &propertyAddress, 0, nil, &size, &translation)
+            if status == noErr, let name = outputPointer.pointee {
+                resolved = name as String
+            }
+        }
+    }
+
+    guard let name = resolved else {
+        throw HALError.osStatus(
+            status,
+            "AudioObjectGetPropertyData(kAudioDevicePropertyClockSourceNameForIDCFString)"
+        )
+    }
+    return name
+}
+
+func clockSources(_ id: AudioObjectID) throws -> [ClockSource] {
+    var propertyAddress = address(kAudioDevicePropertyClockSources)
+    let sourceIDs: [UInt32] = try getPropertyArray(id, &propertyAddress, as: UInt32.self)
+    return try sourceIDs.map { sourceID in
+        ClockSource(id: sourceID, name: try clockSourceName(id, sourceID: sourceID))
+    }
+}
+
+func currentClockSource(_ id: AudioObjectID) throws -> UInt32 {
+    var propertyAddress = address(kAudioDevicePropertyClockSource)
+    return try getPropertyValue(id, &propertyAddress, as: UInt32.self)
+}
+
+func setClockSource(_ id: AudioObjectID, to sourceID: UInt32) throws {
+    var propertyAddress = address(kAudioDevicePropertyClockSource)
+    try setPropertyValue(id, &propertyAddress, to: sourceID)
+}
+```
+
+- [ ] **Step 2: Add the clock source line to `status`**
+
+In `Sources/ScarlettAudio/main.swift`, inside `runStatus()`, add after the bit depth lines and before the closing brace:
+
+```swift
+    let sources = try clockSources(deviceID)
+    let currentSourceID = try currentClockSource(deviceID)
+    let currentSourceName = sources.first { $0.id == currentSourceID }?.name
+        ?? "id \(currentSourceID)"
+
+    print("Clock source: \(currentSourceName)")
+    print("  available: \(sources.map { $0.name }.joined(separator: ", "))")
+```
+
+- [ ] **Step 3: Add `runSetClock` and dispatch it**
+
+In `Sources/ScarlettAudio/main.swift`, add this function directly after `runSetBits`:
+
+```swift
+func runSetClock(_ requestedName: String) throws {
+    let deviceID = try findDevice(nameContains: deviceNameQuery)
+    let sources = try clockSources(deviceID)
+
+    guard let requested = findClockSource(named: requestedName, in: sources) else {
+        let available = sources.map { $0.name }.joined(separator: ", ")
+        printError("Unknown clock source \"\(requestedName)\". Available: \(available)")
+        exit(1)
+    }
+
+    try setClockSource(deviceID, to: requested.id)
+
+    let actual = try pollUntilMatches(
+        read: { try currentClockSource(deviceID) },
+        matches: { $0 == requested.id }
+    )
+
+    guard actual == requested.id else {
+        let actualName = (try? clockSourceName(deviceID, sourceID: actual)) ?? "id \(actual)"
+        print("❌ Clock source is \(actualName), expected \(requested.name)")
+        exit(1)
+    }
+    print("✅ Clock source is now \(requested.name)")
+
+    if normalizedClockName(requested.name) != "internal" {
+        print("""
+            ⚠️  \(requested.name) is an external clock. Core Audio confirms the \
+            selection but cannot report lock status: the interface stays locked \
+            only while a valid \(requested.name) signal is present, and the sample \
+            rate now follows that signal.
+            """)
+    }
+}
+```
+
+Then change the switch arm added in Task 7 from:
+
+```swift
+    case .setClock:
+        printError("Command not implemented yet")
+        exit(1)
+```
+
+to:
+
+```swift
+    case .setClock(let source):
+        try runSetClock(source)
+```
+
+- [ ] **Step 4: Build and run the unit tests**
+
+Run: `swift test`
+Expected: PASS — 34 tests, no failures, sources compile.
+
+- [ ] **Step 5: Manually verify against the hardware**
+
+> **Caution:** the Scarlett is the machine's default output device. Switching it
+> to S/PDIF or ADAT with no valid signal on that input leaves it unclocked, so
+> system audio may glitch or go silent until Internal is restored. Do this step
+> when nothing important is playing, and run the restore command immediately
+> after.
+
+Run: `swift run scarlett-audio status`
+Expected: the status output now ends with:
+
+```
+Clock source: Internal
+  available: Internal, S/PDIF, ADAT
+```
+
+Run: `swift run scarlett-audio set-clock spdif`
+Expected: `✅ Clock source is now S/PDIF`, followed by the `⚠️` external-clock warning, exit code 0.
+
+Confirm in Audio MIDI Setup that the Scarlett 18i20's Clock Source now reads S/PDIF.
+
+Restore Internal immediately: `swift run scarlett-audio set-clock internal`
+Expected: `✅ Clock source is now Internal`, no warning line, exit code 0.
+
+Check the rejection path: `swift run scarlett-audio set-clock wordclock`
+Expected: `Error: Unknown clock source "wordclock". Available: Internal, S/PDIF, ADAT`, exit code 1.
+
+- [ ] **Step 6: Update the README**
+
+In `README.md`, add `set-clock` to the usage block:
+
+```bash
+scarlett-audio set-clock internal
+scarlett-audio set-clock spdif
+```
+
+Add `Clock source` to the sample `status` output:
+
+```
+Clock source: Internal
+  available: Internal, S/PDIF, ADAT
+```
+
+And add this section directly before `## Tests`:
+
+```markdown
+## Clock source
+
+`set-clock` matches source names case- and punctuation-insensitively, so
+`spdif`, `S/PDIF` and `SPDIF` all select the same source.
+
+Two caveats when slaving to an external clock:
+
+- Core Audio confirms that a source was *selected*, but exposes no
+  standard way to report whether an external signal is actually
+  *locked*. Selecting S/PDIF with nothing plugged in reports success
+  while the interface runs unclocked — hence the warning the tool
+  prints.
+- While slaved to S/PDIF or ADAT, the sample rate follows the incoming
+  signal, so `set-rate` may fail or be overridden until you switch back
+  to Internal.
+```
+
+- [ ] **Step 7: Final full verification**
+
+Run: `swift build -c release`
+Expected: builds without warnings or errors.
+
+Run: `swift test`
+Expected: PASS — 34 tests, no failures.
+
+Run: `.build/release/scarlett-audio status`
+Expected: device name, sample rate, bit depth, and clock source printed, all matching Audio MIDI Setup.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add Sources/ScarlettAudio/CoreAudioHAL.swift Sources/ScarlettAudio/main.swift README.md
+git commit -m "$(cat <<'EOF'
+Add clock source status and set-clock command
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF

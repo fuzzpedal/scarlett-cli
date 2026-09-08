@@ -74,12 +74,54 @@ subcommands).
   for a stream, fail with an error naming the unsupported
   rate/bit-depth pairing.
 
+## Clock source (timing sync)
+
+Verified against the hardware on 2026-09-08: Core Audio exposes the
+18i20's clock source, and the property is settable. No Focusrite
+MixControl involvement is needed.
+
+```
+[global] ClockSources: true, ClockSource: true
+    source id 690487296: Internal
+    source id 707264512: S/PDIF
+    source id 724041728: ADAT
+    current: id 690487296 (Internal), settable: true
+```
+
+- The property reports identically on global, input, and output scopes,
+  so `kAudioObjectPropertyScopeGlobal` alone is used.
+- List sources via `kAudioDevicePropertyClockSources` (array of
+  `UInt32` source IDs); resolve each ID to its display name via
+  `kAudioDevicePropertyClockSourceNameForIDCFString`, which takes an
+  `AudioValueTranslation` mapping `UInt32` → `CFString`.
+- Read/write the current source via `kAudioDevicePropertyClockSource`
+  (`UInt32`).
+- Source names are matched **forgivingly**: compare on the name reduced
+  to lowercase letters and digits, so `spdif`, `S/PDIF` and `SPDIF` all
+  select the same source.
+- Source IDs are hardware-assigned, not stable constants — always
+  resolve by name against the live list rather than hard-coding IDs.
+
+Two limits of the platform, surfaced to the user rather than worked
+around:
+
+- **Selection is verifiable; lock is not.** Reading the property back
+  confirms the source was selected, but Core Audio exposes no standard
+  property saying an external signal is actually locked. Selecting
+  S/PDIF with nothing feeding it still reports success while the
+  interface runs unclocked. The tool therefore prints a warning
+  whenever a non-Internal source is selected.
+- **External clock overrides sample rate.** When slaved to S/PDIF or
+  ADAT, the rate follows the incoming signal, so `set-rate` may fail or
+  be overridden. Documented in the README; no special handling.
+
 ## CLI surface
 
 ```
 scarlett-audio status
     Prints device name, current sample rate, current bit depth,
-    and the full lists of supported values for each.
+    current clock source, and the full lists of supported values
+    for each.
 
 scarlett-audio set-rate <hz>
     Sets the nominal sample rate, then re-reads it and prints
@@ -88,6 +130,11 @@ scarlett-audio set-rate <hz>
 scarlett-audio set-bits <bits>
     Sets the bit depth on all streams, then re-reads and prints
     ✅/❌ against the requested value.
+
+scarlett-audio set-clock <source>
+    Sets the clock source by name (Internal, S/PDIF, ADAT — matched
+    case- and punctuation-insensitively), then re-reads and prints
+    ✅/❌. Warns when the selected source is external.
 
 scarlett-audio set --rate <hz> --bits <bits>
     Sets both (rate first, then bit depth against the new rate),
@@ -123,6 +170,8 @@ cannot contain hyphens):
 - `Sources/ScarlettAudio/CLI.swift` — argument parsing (pure)
 - `Sources/ScarlettAudio/AudioFormatLogic.swift` — rate/bit-depth list
   math and tolerance comparison (pure)
+- `Sources/ScarlettAudio/ClockSourceLogic.swift` — clock source name
+  normalization and matching (pure)
 - `Sources/ScarlettAudio/CoreAudioHAL.swift` — Core Audio property
   get/set wrappers (I/O)
 - `Sources/ScarlettAudio/Verification.swift` — readback polling (I/O)
@@ -149,5 +198,6 @@ results against Audio MIDI Setup.
 
 - GUI.
 - Support for devices other than by-name substring match.
-- Gain, routing, or any other interface control beyond sample rate and
-  bit depth.
+- Gain, routing, or any other interface control beyond sample rate, bit
+  depth, and clock source.
+- Reporting external-clock lock status (Core Audio does not expose it).
