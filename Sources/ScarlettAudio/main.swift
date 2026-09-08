@@ -54,6 +54,40 @@ func runSetRate(_ requestedRate: Double) throws {
     print("✅ Sample rate is now \(actual) Hz")
 }
 
+func runSetBits(_ requestedBits: UInt32) throws {
+    let deviceID = try findDevice(nameContains: deviceNameQuery)
+    let currentRate = try nominalSampleRate(deviceID)
+    let streams = try allStreamIDs(deviceID)
+
+    for stream in streams {
+        let formats = try availablePhysicalFormats(stream)
+        let pairs = formats.map {
+            RateBitsPair(sampleRate: $0.mSampleRate, bits: $0.mBitsPerChannel)
+        }
+        guard
+            let match = findMatchingFormat(in: pairs, sampleRate: currentRate, bits: requestedBits),
+            let format = formats.first(where: {
+                $0.mBitsPerChannel == match.bits
+                    && valuesMatch(requested: match.sampleRate, actual: $0.mSampleRate)
+            })
+        else {
+            throw HALError.formatNotAvailable(rate: currentRate, bits: requestedBits)
+        }
+        try setPhysicalFormat(stream, to: format)
+    }
+
+    let actual = try pollUntilMatches(
+        read: { try physicalFormat(streams[0]).mBitsPerChannel },
+        matches: { $0 == requestedBits }
+    )
+
+    guard actual == requestedBits else {
+        print("❌ Bit depth is \(actual) bits, expected \(requestedBits) bits")
+        exit(1)
+    }
+    print("✅ Bit depth is now \(actual) bits")
+}
+
 let arguments = Array(CommandLine.arguments.dropFirst())
 
 let command: Command
@@ -72,7 +106,9 @@ do {
         try runStatus()
     case .setRate(let rate):
         try runSetRate(rate)
-    case .setBits, .set:
+    case .setBits(let bits):
+        try runSetBits(bits)
+    case .set:
         printError("Command not implemented yet")
         exit(1)
     }
