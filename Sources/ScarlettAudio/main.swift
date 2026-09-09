@@ -59,6 +59,12 @@ func runSetBits(_ requestedBits: UInt32) throws {
     let currentRate = try nominalSampleRate(deviceID)
     let streams = try allStreamIDs(deviceID)
 
+    // Resolve-before-apply: look up the target format for every stream first
+    // and only start writing once every stream is known to support the
+    // request. This way a stream that cannot satisfy the request aborts the
+    // whole operation before any stream has been mutated, instead of leaving
+    // some streams on the new format and others on the old one.
+    var resolved: [(stream: AudioObjectID, format: AudioStreamBasicDescription)] = []
     for stream in streams {
         let formats = try availablePhysicalFormats(stream)
         let pairs = formats.map {
@@ -73,19 +79,25 @@ func runSetBits(_ requestedBits: UInt32) throws {
         else {
             throw HALError.formatNotAvailable(rate: currentRate, bits: requestedBits)
         }
+        resolved.append((stream, format))
+    }
+
+    for (stream, format) in resolved {
         try setPhysicalFormat(stream, to: format)
     }
 
-    let actual = try pollUntilMatches(
-        read: { try physicalFormat(streams[0]).mBitsPerChannel },
-        matches: { $0 == requestedBits }
-    )
+    for stream in streams {
+        let actual = try pollUntilMatches(
+            read: { try physicalFormat(stream).mBitsPerChannel },
+            matches: { $0 == requestedBits }
+        )
 
-    guard actual == requestedBits else {
-        print("❌ Bit depth is \(actual) bits, expected \(requestedBits) bits")
-        exit(1)
+        guard actual == requestedBits else {
+            print("❌ Bit depth is \(actual) bits, expected \(requestedBits) bits")
+            exit(1)
+        }
     }
-    print("✅ Bit depth is now \(actual) bits")
+    print("✅ Bit depth is now \(requestedBits) bits")
 }
 
 let arguments = Array(CommandLine.arguments.dropFirst())
