@@ -1070,10 +1070,27 @@ Expected: PASS — 25 tests, no failures.
 
 - [ ] **Step 3: Manually verify the combined command**
 
-Run: `swift run scarlett-audio set --rate 44100 --bits 16`
-Expected: two lines, `✅ Sample rate is now 44100.0 Hz` then `✅ Bit depth is now 16 bits`, exit code 0.
+**Hardware reality, measured 2026-09-08:** this 18i20 offers only 24-bit, on both
+streams, at all four sample rates. The combined command is therefore verified by
+changing the sample rate while holding the bit depth at the only value the device
+has.
+
+Success path — change the rate, keep the depth:
+
+Run: `swift run scarlett-audio set --rate 44100 --bits 24`
+Expected: two lines, `✅ Sample rate is now 44100.0 Hz` then `✅ Bit depth is now 24 bits`, exit code 0.
 
 Confirm both values in Audio MIDI Setup, then restore: `swift run scarlett-audio set --rate 48000 --bits 24`
+Expected: `✅ Sample rate is now 48000.0 Hz` then `✅ Bit depth is now 24 bits`, exit code 0.
+
+Partial-application path — a rate the device has with a depth it does not:
+
+Run: `swift run scarlett-audio set --rate 44100 --bits 16`
+Expected: `✅ Sample rate is now 44100.0 Hz`, then `Error: No 16-bit format available at 44100.0 Hz`, exit code 1.
+
+This documents a real property of the combined command: the rate is applied and
+verified first, so a rejected bit depth leaves the device at the NEW rate, not the
+one it started at. Restore afterwards: `swift run scarlett-audio set --rate 48000 --bits 24`
 
 - [ ] **Step 4: Write the README**
 
