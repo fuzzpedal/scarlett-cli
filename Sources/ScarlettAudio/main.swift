@@ -36,6 +36,14 @@ func runStatus() throws {
     print("  available: \(rates.map { String($0) }.joined(separator: ", "))")
     print("Bit depth: \(currentBits) bits")
     print("  available: \(bitDepths.map { String($0) }.joined(separator: ", "))")
+
+    let sources = try clockSources(deviceID)
+    let currentSourceID = try currentClockSource(deviceID)
+    let currentSourceName = sources.first { $0.id == currentSourceID }?.name
+        ?? "id \(currentSourceID)"
+
+    print("Clock source: \(currentSourceName)")
+    print("  available: \(sources.map { $0.name }.joined(separator: ", "))")
 }
 
 func runSetRate(_ requestedRate: Double) throws {
@@ -100,6 +108,40 @@ func runSetBits(_ requestedBits: UInt32) throws {
     print("✅ Bit depth is now \(requestedBits) bits")
 }
 
+func runSetClock(_ requestedName: String) throws {
+    let deviceID = try findDevice(nameContains: deviceNameQuery)
+    let sources = try clockSources(deviceID)
+
+    guard let requested = findClockSource(named: requestedName, in: sources) else {
+        let available = sources.map { $0.name }.joined(separator: ", ")
+        printError("Unknown clock source \"\(requestedName)\". Available: \(available)")
+        exit(1)
+    }
+
+    try setClockSource(deviceID, to: requested.id)
+
+    let actual = try pollUntilMatches(
+        read: { try currentClockSource(deviceID) },
+        matches: { $0 == requested.id }
+    )
+
+    guard actual == requested.id else {
+        let actualName = (try? clockSourceName(deviceID, sourceID: actual)) ?? "id \(actual)"
+        print("❌ Clock source is \(actualName), expected \(requested.name)")
+        exit(1)
+    }
+    print("✅ Clock source is now \(requested.name)")
+
+    if normalizedClockName(requested.name) != "internal" {
+        print("""
+            ⚠️  \(requested.name) is an external clock. Core Audio confirms the \
+            selection but cannot report lock status: the interface stays locked \
+            only while a valid \(requested.name) signal is present, and the sample \
+            rate now follows that signal.
+            """)
+    }
+}
+
 let arguments = Array(CommandLine.arguments.dropFirst())
 
 let command: Command
@@ -120,9 +162,8 @@ do {
         try runSetRate(rate)
     case .setBits(let bits):
         try runSetBits(bits)
-    case .setClock:
-        printError("Command not implemented yet")
-        exit(1)
+    case .setClock(let source):
+        try runSetClock(source)
     case .set(let rate, let bits):
         try runSetRate(rate)
         try runSetBits(bits)

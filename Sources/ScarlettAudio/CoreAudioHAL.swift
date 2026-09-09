@@ -164,3 +164,56 @@ func availablePhysicalFormats(_ streamID: AudioObjectID) throws -> [AudioStreamB
     )
     return ranged.map { $0.mFormat }
 }
+
+/// Resolves a clock source ID to its display name. This property takes an
+/// AudioValueTranslation, which carries pointers to the input ID and the
+/// output CFString rather than the values themselves.
+func clockSourceName(_ id: AudioObjectID, sourceID: UInt32) throws -> String {
+    var propertyAddress = address(kAudioDevicePropertyClockSourceNameForIDCFString)
+    var input = sourceID
+    var output: CFString?
+    var resolved: String?
+    var status: OSStatus = noErr
+
+    withUnsafeMutablePointer(to: &input) { inputPointer in
+        withUnsafeMutablePointer(to: &output) { outputPointer in
+            var translation = AudioValueTranslation(
+                mInputData: UnsafeMutableRawPointer(inputPointer),
+                mInputDataSize: UInt32(MemoryLayout<UInt32>.size),
+                mOutputData: UnsafeMutableRawPointer(outputPointer),
+                mOutputDataSize: UInt32(MemoryLayout<CFString?>.size)
+            )
+            var size = UInt32(MemoryLayout<AudioValueTranslation>.size)
+            status = AudioObjectGetPropertyData(id, &propertyAddress, 0, nil, &size, &translation)
+            if status == noErr, let name = outputPointer.pointee {
+                resolved = name as String
+            }
+        }
+    }
+
+    guard let name = resolved else {
+        throw HALError.osStatus(
+            status,
+            "AudioObjectGetPropertyData(kAudioDevicePropertyClockSourceNameForIDCFString)"
+        )
+    }
+    return name
+}
+
+func clockSources(_ id: AudioObjectID) throws -> [ClockSource] {
+    var propertyAddress = address(kAudioDevicePropertyClockSources)
+    let sourceIDs: [UInt32] = try getPropertyArray(id, &propertyAddress, as: UInt32.self)
+    return try sourceIDs.map { sourceID in
+        ClockSource(id: sourceID, name: try clockSourceName(id, sourceID: sourceID))
+    }
+}
+
+func currentClockSource(_ id: AudioObjectID) throws -> UInt32 {
+    var propertyAddress = address(kAudioDevicePropertyClockSource)
+    return try getPropertyValue(id, &propertyAddress, as: UInt32.self)
+}
+
+func setClockSource(_ id: AudioObjectID, to sourceID: UInt32) throws {
+    var propertyAddress = address(kAudioDevicePropertyClockSource)
+    try setPropertyValue(id, &propertyAddress, to: sourceID)
+}

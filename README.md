@@ -26,6 +26,8 @@ cp .build/release/scarlett-audio /usr/local/bin/
 scarlett-audio status
 scarlett-audio set-rate 48000
 scarlett-audio set-bits 24
+scarlett-audio set-clock internal
+scarlett-audio set-clock spdif
 scarlett-audio set --rate 96000 --bits 24
 ```
 
@@ -38,6 +40,8 @@ Sample rate: 48000.0 Hz
   available: 44100.0, 48000.0, 88200.0, 96000.0
 Bit depth: 24 bits
   available: 24
+Clock source: Internal
+  available: Internal, S/PDIF, ADAT
 ```
 
 Every `set` command re-reads the property afterwards and reports whether the
@@ -50,6 +54,22 @@ hardware took the change:
 
 The exit code reflects that verification, not merely whether the Core Audio
 call returned without error — so chaining with `&&` is meaningful.
+
+## Clock source
+
+`set-clock` matches source names case- and punctuation-insensitively, so
+`spdif`, `S/PDIF` and `SPDIF` all select the same source.
+
+Two caveats when slaving to an external clock:
+
+- Core Audio confirms that a source was *selected*, but exposes no
+  standard way to report whether an external signal is actually
+  *locked*. Selecting S/PDIF with nothing plugged in reports success
+  while the interface runs unclocked — hence the warning the tool
+  prints.
+- While slaved to S/PDIF or ADAT, the sample rate follows the incoming
+  signal, so `set-rate` may fail or be overridden until you switch back
+  to Internal.
 
 ## Tests
 
