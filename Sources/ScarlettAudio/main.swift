@@ -118,17 +118,28 @@ func runSetClock(_ requestedName: String) throws {
         exit(1)
     }
 
-    try setClockSource(deviceID, to: requested.id)
+    // Core Audio rejects a write that sets the clock source to the value it
+    // already holds, failing with kAudioHardwareUnspecifiedError. So before
+    // writing, read the current source from the device (this is the same
+    // readback the "changed" path relies on, just performed up front) and
+    // skip the write entirely when it already matches the request. Do not
+    // "simplify" this away — re-asserting an already-selected clock is a
+    // routine no-op for callers and must succeed, not surface a spurious
+    // hardware error.
+    let existing = try currentClockSource(deviceID)
+    if existing != requested.id {
+        try setClockSource(deviceID, to: requested.id)
 
-    let actual = try pollUntilMatches(
-        read: { try currentClockSource(deviceID) },
-        matches: { $0 == requested.id }
-    )
+        let actual = try pollUntilMatches(
+            read: { try currentClockSource(deviceID) },
+            matches: { $0 == requested.id }
+        )
 
-    guard actual == requested.id else {
-        let actualName = (try? clockSourceName(deviceID, sourceID: actual)) ?? "id \(actual)"
-        print("❌ Clock source is \(actualName), expected \(requested.name)")
-        exit(1)
+        guard actual == requested.id else {
+            let actualName = (try? clockSourceName(deviceID, sourceID: actual)) ?? "id \(actual)"
+            print("❌ Clock source is \(actualName), expected \(requested.name)")
+            exit(1)
+        }
     }
     print("✅ Clock source is now \(requested.name)")
 
