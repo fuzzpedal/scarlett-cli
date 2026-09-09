@@ -1,8 +1,8 @@
 # scarlett-audio
 
-A macOS command-line tool for reading and setting the sample rate and bit
-depth of a Focusrite Scarlett 18i20, with verification that the hardware
-actually applied the change.
+A macOS command-line tool for reading and setting the sample rate, bit
+depth, and clock source of a Focusrite Scarlett 18i20, with verification
+that the hardware actually applied the change.
 
 It talks directly to Core Audio, so it controls the same device properties
 Audio MIDI Setup's Format column does — without opening the GUI.
@@ -30,6 +30,10 @@ scarlett-audio set-clock internal
 scarlett-audio set-clock spdif
 scarlett-audio set --rate 96000 --bits 24
 ```
+
+The combined `set` command applies the rate before the bit depth, so if the
+bit depth request is rejected, the device is left at the new rate rather
+than the original one.
 
 `status` prints the current sample rate and bit depth along with everything
 the device supports:
@@ -77,6 +81,20 @@ Two caveats when slaving to an external clock:
 swift test
 ```
 
-The unit tests cover argument parsing and the sample-rate/bit-depth list
-logic. The Core Audio wrappers are exercised manually against the connected
-interface, since they require the physical hardware.
+The unit tests cover argument parsing and the sample-rate/bit-depth/clock-
+source list logic. The Core Audio wrappers are exercised manually against
+the connected interface, since they require the physical hardware.
+
+Note on `set-bits`: this interface only advertises 24-bit formats, so
+against real hardware `set-bits` has only ever been exercised idempotently
+(requesting the depth already in effect) and on its rejection path
+(requesting an unsupported depth). Its actual bit-depth *transition* path
+has never been observed against hardware and would need a multi-depth
+interface to validate.
+
+## Requirements
+
+Requires macOS 12 or later (the code uses
+`kAudioObjectPropertyElementMain`, and `Package.swift` declares
+`.macOS(.v12)`). The device is matched by the hard-coded substring
+`"Scarlett 18i20"`, so other Scarlett models are not currently found.

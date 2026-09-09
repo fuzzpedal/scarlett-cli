@@ -7,6 +7,14 @@ func printError(_ message: String) {
     FileHandle.standardError.write(Data("Error: \(message)\n".utf8))
 }
 
+/// Like `printError`, but without the "Error: " prefix — for messages (like
+/// the "❌ ..." readback-mismatch lines) whose wording already stands on its
+/// own. Still writes to stderr so failures are visible even when stdout is
+/// redirected.
+func printStderr(_ message: String) {
+    FileHandle.standardError.write(Data("\(message)\n".utf8))
+}
+
 func allStreamIDs(_ deviceID: AudioObjectID) throws -> [AudioObjectID] {
     let inputs = try streamIDs(deviceID, scope: kAudioObjectPropertyScopeInput)
     let outputs = try streamIDs(deviceID, scope: kAudioObjectPropertyScopeOutput)
@@ -48,6 +56,14 @@ func runStatus() throws {
 
 func runSetRate(_ requestedRate: Double) throws {
     let deviceID = try findDevice(nameContains: deviceNameQuery)
+
+    let rates = try availableSampleRates(deviceID)
+    guard rates.contains(where: { valuesMatch(requested: requestedRate, actual: $0) }) else {
+        let available = rates.map { String($0) }.joined(separator: ", ")
+        printError("Unknown sample rate \(requestedRate) Hz. Available: \(available)")
+        exit(1)
+    }
+
     try setNominalSampleRate(deviceID, to: requestedRate)
 
     let actual = try pollUntilMatches(
@@ -56,7 +72,7 @@ func runSetRate(_ requestedRate: Double) throws {
     )
 
     guard valuesMatch(requested: requestedRate, actual: actual) else {
-        print("❌ Sample rate is \(actual) Hz, expected \(requestedRate) Hz")
+        printStderr("❌ Sample rate is \(actual) Hz, expected \(requestedRate) Hz")
         exit(1)
     }
     print("✅ Sample rate is now \(actual) Hz")
@@ -90,8 +106,16 @@ func runSetBits(_ requestedBits: UInt32) throws {
         resolved.append((stream, format))
     }
 
-    for (stream, format) in resolved {
-        try setPhysicalFormat(stream, to: format)
+    do {
+        for (stream, format) in resolved {
+            try setPhysicalFormat(stream, to: format)
+        }
+    } catch {
+        printStderr(
+            "❌ Failed partway through applying the bit depth change: \(error). "
+                + "Streams may now be inconsistent with each other — run `status` to check."
+        )
+        exit(1)
     }
 
     for stream in streams {
@@ -101,7 +125,7 @@ func runSetBits(_ requestedBits: UInt32) throws {
         )
 
         guard actual == requestedBits else {
-            print("❌ Bit depth is \(actual) bits, expected \(requestedBits) bits")
+            printStderr("❌ Bit depth is \(actual) bits, expected \(requestedBits) bits")
             exit(1)
         }
     }
@@ -137,7 +161,7 @@ func runSetClock(_ requestedName: String) throws {
 
         guard actual == requested.id else {
             let actualName = (try? clockSourceName(deviceID, sourceID: actual)) ?? "id \(actual)"
-            print("❌ Clock source is \(actualName), expected \(requested.name)")
+            printStderr("❌ Clock source is \(actualName), expected \(requested.name)")
             exit(1)
         }
     }
@@ -152,6 +176,11 @@ func runSetClock(_ requestedName: String) throws {
             """)
     }
 }
+
+// Line-buffer stdout so ✅/❌ output interleaves correctly with stderr when
+// stdout is redirected to a pipe or file (where it would otherwise be
+// fully block-buffered, delaying output relative to unbuffered stderr).
+setvbuf(stdout, nil, _IOLBF, 0)
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 

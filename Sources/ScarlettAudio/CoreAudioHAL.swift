@@ -49,7 +49,14 @@ private func getPropertyArray<T>(
     guard status == noErr else {
         throw HALError.osStatus(status, "AudioObjectGetPropertyData")
     }
-    return Array(UnsafeBufferPointer(start: buffer, count: count))
+    // `size` is an in/out parameter: Core Audio overwrites it with the number
+    // of bytes actually written, which can be less than what we sized the
+    // buffer for if the underlying list shrank between the two calls (e.g. a
+    // device unplugged or an aggregate device reconfigured). Recompute the
+    // element count from the returned size and clamp to it so we never read
+    // past the initialized portion of the buffer.
+    let actualCount = min(count, Int(size) / MemoryLayout<T>.stride)
+    return Array(UnsafeBufferPointer(start: buffer, count: actualCount))
 }
 
 private func getPropertyValue<T>(
