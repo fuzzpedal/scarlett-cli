@@ -30,6 +30,18 @@ final class CLITests: XCTestCase {
         assertFailure(parseArguments(["set-bits", "deep"]), equals: .invalidNumber("deep"))
     }
 
+    func test_setClockCommand() {
+        assertSuccess(parseArguments(["set-clock", "spdif"]), equals: .setClock("spdif"))
+    }
+
+    func test_setClockPreservesArgumentVerbatim() {
+        assertSuccess(parseArguments(["set-clock", "S/PDIF"]), equals: .setClock("S/PDIF"))
+    }
+
+    func test_setClockMissingArgument() {
+        assertFailure(parseArguments(["set-clock"]), equals: .missingArgument("<source>"))
+    }
+
     func test_setCommand() {
         assertSuccess(
             parseArguments(["set", "--rate", "96000", "--bits", "24"]),

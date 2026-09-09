@@ -4,6 +4,7 @@ enum Command: Equatable {
     case status
     case setRate(Double)
     case setBits(UInt32)
+    case setClock(String)
     case set(rate: Double, bits: UInt32)
 }
 
@@ -15,7 +16,7 @@ enum CLIError: Error, Equatable, CustomStringConvertible {
     var description: String {
         switch self {
         case .unknownCommand(let name):
-            return "Unknown command \"\(name)\". Expected one of: status, set-rate, set-bits, set"
+            return "Unknown command \"\(name)\". Expected one of: status, set-rate, set-bits, set-clock, set"
         case .missingArgument(let name):
             return "Missing required argument: \(name)"
         case .invalidNumber(let value):
@@ -29,6 +30,7 @@ Usage:
   scarlett-audio status
   scarlett-audio set-rate <hz>
   scarlett-audio set-bits <bits>
+  scarlett-audio set-clock <source>
   scarlett-audio set --rate <hz> --bits <bits>
 """
 
@@ -59,6 +61,12 @@ func parseArguments(_ args: [String]) -> Result<Command, CLIError> {
             return .failure(.invalidNumber(bitsString))
         }
         return .success(.setBits(bits))
+
+    case "set-clock":
+        guard let source = rest.first else {
+            return .failure(.missingArgument("<source>"))
+        }
+        return .success(.setClock(source))
 
     case "set":
         guard let rateString = flagValue(named: "--rate", in: rest) else {
