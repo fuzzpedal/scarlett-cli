@@ -120,9 +120,9 @@ do {
         try runSetRate(rate)
     case .setBits(let bits):
         try runSetBits(bits)
-    case .set:
-        printError("Command not implemented yet")
-        exit(1)
+    case .set(let rate, let bits):
+        try runSetRate(rate)
+        try runSetBits(bits)
     }
 } catch let error as HALError {
     printError(error.description)

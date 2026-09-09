@@ -1,0 +1,62 @@
+# scarlett-audio
+
+A macOS command-line tool for reading and setting the sample rate and bit
+depth of a Focusrite Scarlett 18i20, with verification that the hardware
+actually applied the change.
+
+It talks directly to Core Audio, so it controls the same device properties
+Audio MIDI Setup's Format column does — without opening the GUI.
+
+## Build
+
+```bash
+swift build -c release
+```
+
+The binary lands at `.build/release/scarlett-audio`. Copy it somewhere on
+your `PATH` if you want it available everywhere:
+
+```bash
+cp .build/release/scarlett-audio /usr/local/bin/
+```
+
+## Usage
+
+```bash
+scarlett-audio status
+scarlett-audio set-rate 48000
+scarlett-audio set-bits 24
+scarlett-audio set --rate 96000 --bits 24
+```
+
+`status` prints the current sample rate and bit depth along with everything
+the device supports:
+
+```
+Device: Scarlett 18i20 USB
+Sample rate: 48000.0 Hz
+  available: 44100.0, 48000.0, 88200.0, 96000.0
+Bit depth: 24 bits
+  available: 24
+```
+
+Every `set` command re-reads the property afterwards and reports whether the
+hardware took the change:
+
+```
+✅ Sample rate is now 96000.0 Hz
+❌ Sample rate is 48000.0 Hz, expected 96000.0 Hz
+```
+
+The exit code reflects that verification, not merely whether the Core Audio
+call returned without error — so chaining with `&&` is meaningful.
+
+## Tests
+
+```bash
+swift test
+```
+
+The unit tests cover argument parsing and the sample-rate/bit-depth list
+logic. The Core Audio wrappers are exercised manually against the connected
+interface, since they require the physical hardware.
