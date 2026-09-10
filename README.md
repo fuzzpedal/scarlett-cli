@@ -107,8 +107,13 @@ swift test
 ```
 
 The unit tests cover argument parsing and the sample-rate/bit-depth/clock-
-source list logic. The Core Audio wrappers are exercised manually against
-the connected interface, since they require the physical hardware.
+source list logic. The Core Audio wrappers, along with the libusb transfer
+that saves the clock source to the interface's flash, are exercised
+manually against the connected interface, since they require the physical
+hardware. The save path's end-to-end behavior — that a saved clock source
+actually survives a power cycle — is verified by a manual power-cycle
+acceptance test rather than by the unit suite; as of this commit that
+acceptance test has not yet been run.
 
 Note on `set-bits`: this interface only advertises 24-bit formats, so
 against real hardware `set-bits` has only ever been exercised idempotently

@@ -69,6 +69,20 @@ final class CLITests: XCTestCase {
         assertFailure(parseArguments(["set-clock"]), equals: .missingArgument("<source>"))
     }
 
+    func test_setClockRejectsUnknownFlag() {
+        assertFailure(
+            parseArguments(["set-clock", "spdif", "--sve"]),
+            equals: .unknownFlag("--sve")
+        )
+    }
+
+    func test_setClockRejectsUnknownFlagBeforeSource() {
+        assertFailure(
+            parseArguments(["set-clock", "--sve", "spdif"]),
+            equals: .unknownFlag("--sve")
+        )
+    }
+
     func test_saveCommand() {
         assertSuccess(parseArguments(["save"]), equals: .save)
     }

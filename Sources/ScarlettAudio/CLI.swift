@@ -13,6 +13,7 @@ enum CLIError: Error, Equatable, CustomStringConvertible {
     case unknownCommand(String)
     case missingArgument(String)
     case invalidNumber(String)
+    case unknownFlag(String)
 
     var description: String {
         switch self {
@@ -22,6 +23,8 @@ enum CLIError: Error, Equatable, CustomStringConvertible {
             return "Missing required argument: \(name)"
         case .invalidNumber(let value):
             return "Expected a number but got \"\(value)\""
+        case .unknownFlag(let flag):
+            return "Unknown flag \"\(flag)\". The only flag for this command is --save"
         }
     }
 }
@@ -69,6 +72,12 @@ func parseArguments(_ args: [String]) -> Result<Command, CLIError> {
         return .success(.setBits(bits))
 
     case "set-clock":
+        // Reject any unrecognised flag before parsing further, so a typo
+        // like `--sve` fails loudly instead of silently being dropped from
+        // the positional and treated as "did not persist".
+        if let flag = rest.first(where: { $0.hasPrefix("--") && $0 != "--save" }) {
+            return .failure(.unknownFlag(flag))
+        }
         let save = rest.contains("--save")
         // Filter flags out before taking the positional, so
         // `set-clock --save spdif` and `set-clock spdif --save` both work and

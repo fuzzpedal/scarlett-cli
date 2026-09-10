@@ -58,6 +58,7 @@ func runStatus() throws {
     // record goes stale if anything else writes the interface.
     if let last = SaveCache.read() {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
         print("Last saved by this tool: \(last.source) (\(formatter.string(from: last.savedAt)))")
     } else {
@@ -192,7 +193,8 @@ func runSetClock(_ requestedName: String) throws {
 ///
 /// The clock source is read first, purely to record it in the cache — the
 /// device gives us no way to read its saved configuration back. If that read
-/// fails we still save, and leave the cache alone rather than writing a guess.
+/// fails we still save, and record a truthful "unknown" placeholder so a
+/// stale prior entry can't be mistaken for what this save actually wrote.
 func currentClockSourceName() throws -> String? {
     let deviceID = try findDevice(nameContains: deviceNameQuery)
     let sources = try clockSources(deviceID)
@@ -216,6 +218,14 @@ func runSave() throws {
             // status line, so report it without failing the command.
             printStderr("⚠️  Saved to the device, but could not update the local record: \(error)")
         }
+    } else {
+        // We couldn't read back what was saved. A stale cache entry from a
+        // previous save carries the same authority as a fresh one, so it
+        // must be invalidated rather than left in place — otherwise `status`
+        // keeps reporting a source that is no longer necessarily what's on
+        // the device.
+        printStderr("⚠️  Saved to the device, but could not read the clock source to record it.")
+        try? SaveCache.write(LastSaved(source: "unknown", savedAt: Date()))
     }
 }
 
