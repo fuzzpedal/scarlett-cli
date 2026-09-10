@@ -8,8 +8,15 @@ let package = Package(
         .executable(name: "scarlett-audio", targets: ["ScarlettAudio"])
     ],
     targets: [
+        .systemLibrary(
+            name: "CLibUSB",
+            path: "Sources/CLibUSB",
+            pkgConfig: "libusb-1.0",
+            providers: [.brew(["libusb"])]
+        ),
         .executableTarget(
             name: "ScarlettAudio",
+            dependencies: ["CLibUSB"],
             path: "Sources/ScarlettAudio",
             linkerSettings: [
                 .linkedFramework("CoreAudio"),
@@ -18,7 +25,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ScarlettAudioTests",
-            dependencies: ["ScarlettAudio"],
+            dependencies: ["ScarlettAudio", "CLibUSB"],
             path: "Tests/ScarlettAudioTests"
         )
     ]

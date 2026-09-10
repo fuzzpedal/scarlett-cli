@@ -28,6 +28,8 @@ scarlett-audio set-rate 48000
 scarlett-audio set-bits 24
 scarlett-audio set-clock internal
 scarlett-audio set-clock spdif
+scarlett-audio set-clock spdif --save
+scarlett-audio save
 scarlett-audio set --rate 96000 --bits 24
 ```
 
@@ -75,6 +77,29 @@ Two caveats when slaving to an external clock:
   signal, so `set-rate` may fail or be overridden until you switch back
   to Internal.
 
+## Persisting settings
+
+`set-clock` alone changes the *driver's* live setting, which does not survive
+a power cycle. Add `--save` to also commit it to the interface's own flash, so
+the unit comes up on that clock source with no computer attached:
+
+    scarlett-audio set-clock spdif --save
+
+`save` on its own commits whatever the device currently holds. Both save the
+device's **entire** configuration, not just the clock source.
+
+Two limitations worth knowing:
+
+- The saved configuration cannot be read back — the protocol provides a
+  write-and-commit with no corresponding read. `status` therefore reports what
+  this tool last saved, which will be wrong if anything else writes the
+  interface.
+- macOS overwrites the clock source about 410 ms after the device enumerates,
+  with its own remembered value. So while the Mac is attached you cannot
+  observe what the device has stored; it only shows in standalone use.
+
+Requires `brew install libusb`.
+
 ## Tests
 
 ```bash
@@ -82,8 +107,13 @@ swift test
 ```
 
 The unit tests cover argument parsing and the sample-rate/bit-depth/clock-
-source list logic. The Core Audio wrappers are exercised manually against
-the connected interface, since they require the physical hardware.
+source list logic. The Core Audio wrappers, along with the libusb transfer
+that saves the clock source to the interface's flash, are exercised
+manually against the connected interface, since they require the physical
+hardware. The save path's end-to-end behavior — that a saved clock source
+actually survives a power cycle — is verified by a manual power-cycle
+acceptance test rather than by the unit suite; as of this commit that
+acceptance test has not yet been run.
 
 Note on `set-bits`: this interface only advertises 24-bit formats, so
 against real hardware `set-bits` has only ever been exercised idempotently
@@ -98,3 +128,7 @@ Requires macOS 12 or later (the code uses
 `kAudioObjectPropertyElementMain`, and `Package.swift` declares
 `.macOS(.v12)`). The device is matched by the hard-coded substring
 `"Scarlett 18i20"`, so other Scarlett models are not currently found.
+
+Saving to the device's flash (`--save` / `save`) requires `libusb`
+(`brew install libusb`), since it talks to the device directly over USB
+rather than through Core Audio.
