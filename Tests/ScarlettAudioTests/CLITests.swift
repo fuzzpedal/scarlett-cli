@@ -31,15 +31,46 @@ final class CLITests: XCTestCase {
     }
 
     func test_setClockCommand() {
-        assertSuccess(parseArguments(["set-clock", "spdif"]), equals: .setClock("spdif"))
+        assertSuccess(
+            parseArguments(["set-clock", "spdif"]),
+            equals: .setClock("spdif", save: false)
+        )
     }
 
     func test_setClockPreservesArgumentVerbatim() {
-        assertSuccess(parseArguments(["set-clock", "S/PDIF"]), equals: .setClock("S/PDIF"))
+        assertSuccess(
+            parseArguments(["set-clock", "S/PDIF"]),
+            equals: .setClock("S/PDIF", save: false)
+        )
+    }
+
+    func test_setClockWithSaveFlag() {
+        assertSuccess(
+            parseArguments(["set-clock", "spdif", "--save"]),
+            equals: .setClock("spdif", save: true)
+        )
+    }
+
+    func test_setClockSaveFlagBeforeSource() {
+        assertSuccess(
+            parseArguments(["set-clock", "--save", "spdif"]),
+            equals: .setClock("spdif", save: true)
+        )
+    }
+
+    func test_setClockWithOnlyTheFlagIsMissingItsSource() {
+        assertFailure(
+            parseArguments(["set-clock", "--save"]),
+            equals: .missingArgument("<source>")
+        )
     }
 
     func test_setClockMissingArgument() {
         assertFailure(parseArguments(["set-clock"]), equals: .missingArgument("<source>"))
+    }
+
+    func test_saveCommand() {
+        assertSuccess(parseArguments(["save"]), equals: .save)
     }
 
     func test_setCommand() {

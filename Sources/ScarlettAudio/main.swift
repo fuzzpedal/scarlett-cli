@@ -202,8 +202,10 @@ do {
         try runSetRate(rate)
     case .setBits(let bits):
         try runSetBits(bits)
-    case .setClock(let source):
+    case .setClock(let source, _):
         try runSetClock(source)
+    case .save:
+        break
     case .set(let rate, let bits):
         try runSetRate(rate)
         try runSetBits(bits)
