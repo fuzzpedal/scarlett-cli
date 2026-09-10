@@ -52,6 +52,17 @@ func runStatus() throws {
 
     print("Clock source: \(currentSourceName)")
     print("  available: \(sources.map { $0.name }.joined(separator: ", "))")
+
+    // Deliberately worded as what this tool last saved, not as the device's
+    // saved state: the protocol offers no way to read that back, and this
+    // record goes stale if anything else writes the interface.
+    if let last = SaveCache.read() {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        print("Last saved by this tool: \(last.source) (\(formatter.string(from: last.savedAt)))")
+    } else {
+        print("Last saved by this tool: unknown")
+    }
 }
 
 func runSetRate(_ requestedRate: Double) throws {
@@ -177,6 +188,37 @@ func runSetClock(_ requestedName: String) throws {
     }
 }
 
+/// Commits the device's current configuration to its flash.
+///
+/// The clock source is read first, purely to record it in the cache — the
+/// device gives us no way to read its saved configuration back. If that read
+/// fails we still save, and leave the cache alone rather than writing a guess.
+func currentClockSourceName() throws -> String? {
+    let deviceID = try findDevice(nameContains: deviceNameQuery)
+    let sources = try clockSources(deviceID)
+    let currentID = try currentClockSource(deviceID)
+    return sources.first { $0.id == currentID }?.name
+}
+
+func runSave() throws {
+    let recorded: String? = try? currentClockSourceName()
+
+    try saveToHardware()
+
+    print("✅ Saved to the interface — settings will survive a power cycle")
+    print("   This saves the device's entire configuration, not just the clock source.")
+
+    if let recorded {
+        do {
+            try SaveCache.write(LastSaved(source: recorded, savedAt: Date()))
+        } catch {
+            // The hardware save succeeded; a cache failure only costs us the
+            // status line, so report it without failing the command.
+            printStderr("⚠️  Saved to the device, but could not update the local record: \(error)")
+        }
+    }
+}
+
 // Line-buffer stdout so ✅/❌ output interleaves correctly with stderr when
 // stdout is redirected to a pipe or file (where it would otherwise be
 // fully block-buffered, delaying output relative to unbuffered stderr).
@@ -202,14 +244,20 @@ do {
         try runSetRate(rate)
     case .setBits(let bits):
         try runSetBits(bits)
-    case .setClock(let source, _):
+    case .setClock(let source, let save):
         try runSetClock(source)
+        if save {
+            try runSave()
+        }
     case .save:
-        break
+        try runSave()
     case .set(let rate, let bits):
         try runSetRate(rate)
         try runSetBits(bits)
     }
+} catch let error as SaveError {
+    printError(error.description)
+    exit(1)
 } catch let error as HALError {
     printError(error.description)
     exit(1)
