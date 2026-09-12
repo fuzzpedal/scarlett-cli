@@ -9,7 +9,20 @@ Audio MIDI Setup's Format column does — without opening the GUI.
 
 ## Build
 
+You need macOS 12 or later, the Xcode command line tools (Swift 5.9 or
+newer), and `libusb`:
+
 ```bash
+xcode-select --install
+brew install libusb
+```
+
+`libusb` is needed to *build*, not only to save: the `CLibUSB` target
+includes `<libusb.h>`, so the compile fails outright without it.
+
+```bash
+git clone https://github.com/fuzzpedal/scarlett-cli.git
+cd scarlett-cli
 swift build -c release
 ```
 
@@ -98,7 +111,8 @@ Two limitations worth knowing:
   with its own remembered value. So while the Mac is attached you cannot
   observe what the device has stored; it only shows in standalone use.
 
-Requires `brew install libusb`.
+Saving talks to the device over USB rather than through Core Audio, and is
+written for the **1st-generation** 18i20 specifically — see Requirements.
 
 ## Tests
 
@@ -124,11 +138,21 @@ interface to validate.
 
 ## Requirements
 
-Requires macOS 12 or later (the code uses
-`kAudioObjectPropertyElementMain`, and `Package.swift` declares
-`.macOS(.v12)`). The device is matched by the hard-coded substring
-`"Scarlett 18i20"`, so other Scarlett models are not currently found.
+- macOS 12 or later — the code uses `kAudioObjectPropertyElementMain`, and
+  `Package.swift` declares `.macOS(.v12)`.
+- Swift 5.9 or newer, from Xcode or the Command Line Tools.
+- `libusb` (`brew install libusb`), at build time as well as at run time.
 
-Saving to the device's flash (`--save` / `save`) requires `libusb`
-(`brew install libusb`), since it talks to the device directly over USB
-rather than through Core Audio.
+The device is matched by the hard-coded substring `"Scarlett 18i20"`, so other
+Scarlett models are not currently found.
+
+Saving to flash (`--save` / `save`) is narrower still: it implements the
+**1st-generation** 18i20's USB protocol and matches `1235:800c` exactly. On a
+2nd- or 3rd-generation 18i20 the Core Audio commands (`status`, `set-rate`,
+`set-bits`, and `set-clock` without `--save`) still work, but saving reports
+`No Scarlett 18i20 found on USB` rather than sending the wrong protocol to the
+device.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
